@@ -311,8 +311,10 @@ def build_ui():
             follow(out_live, "live_out")
             state = gr.State(None)
             mic.start_recording(live_start, inputs=[la_live, state], outputs=[out_live, state, live_info])
+            # concurrency_limit=None: a stream left open by an earlier attempt (e.g. while the browser
+            # had no mic access) must not block new recordings; MODEL_LOCK still serializes the model.
             mic.stream(live_chunk, inputs=[mic, state, la_live], outputs=[out_live, state, live_info],
-                       stream_every=0.25, time_limit=1800, concurrency_limit=1)
+                       stream_every=0.25, time_limit=1800, concurrency_limit=None)
             mic.stop_recording(live_stop, inputs=state, outputs=[out_live, state, live_info])
         with gr.Tab("File"):
             gr.Markdown("Upload any audio or video file (mp3, m4a, wav, mp4, ...) or record a clip, then press **Transcribe**.")
