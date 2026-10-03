@@ -1,5 +1,7 @@
 # Persian ASR: Nemotron streaming, fine-tuned for Persian (Farsi)
 
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20me%20a%20coffee-support%20this%20project-FFDD00?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/mehdiyari)
+
 Code to train, evaluate and run [`mehdi-hf/nemotron-asr-streaming-farsi`](https://huggingface.co/mehdi-hf/nemotron-asr-streaming-farsi). It's a streaming speech-recognition model for Persian, fine-tuned from NVIDIA's [`nemotron-3.5-asr-streaming-0.6b`](https://huggingface.co/nvidia/nemotron-3.5-asr-streaming-0.6b) on 1,181 hours of openly licensed Persian speech.
 
 One model handles live audio, chunk by chunk, and whole files.
