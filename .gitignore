@@ -1,0 +1,14 @@
+.DS_Store
+__pycache__/
+*.pyc
+.venv/
+.env
+
+# data, audio, models (kept out of git)
+models/
+exp/
+*.wav
+*.mp3
+*.flac
+*.nemo
+*.ckpt

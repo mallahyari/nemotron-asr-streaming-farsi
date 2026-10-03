@@ -1,0 +1,33 @@
+[project]
+name = "nemotron-asr-streaming-farsi"
+version = "0.1.0"
+description = "Fine-tuning NVIDIA NeMo ASR models (Nemotron 3.5 streaming, FastConformer) for Persian"
+requires-python = ">=3.11,<3.13"
+license = "Apache-2.0"
+dependencies = [
+    "jiwer>=3.0",
+    "protobuf>=7.36.2",
+    "sentencepiece>=0.2.2",
+    "soundfile>=0.14.0",
+    "tqdm>=4.70.1",
+    "typer>=0.10",
+    "typing_extensions>=4.10",
+]
+
+[project.optional-dependencies]
+# Training/inference stack; installed on the GPU VM, not needed for text tooling.
+train = ["nemo_toolkit[asr]>=2.4"]
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["persian_asr"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+norecursedirs = [".venv"]
