@@ -40,6 +40,7 @@ spec.loader.exec_module(hf_file)  # load_audio, transcribe_whole, transcribe_str
 MODEL = PROCESSOR = None
 MODEL_LOCK = threading.Lock()  # one transcription at a time (shared model and processor settings)
 FILE_CANCEL = threading.Event()  # set by the File tab's Stop button
+LIVE_IDLE_TIMEOUT = 10.0  # s without new audio before a live session is closed (e.g. page reloaded, mic switched)
 
 
 class LiveSession:
@@ -59,6 +60,11 @@ class LiveSession:
         self.cond = threading.Condition()
         self.text = ""
         self.done = threading.Event()
+        self.in_sr = in_sr
+        self.last_feed = time.monotonic()
+        self.received = 0.0   # seconds of audio received
+        self.level_db = -120.0  # loudness of the latest chunk (dBFS)
+        self.state = "waiting for the model"
         # group_tokens=False: the tokenizer's decode merges repeated tokens by default (a CTC rule).
         self.streamer = TextIteratorStreamer(PROCESSOR.tokenizer, skip_special_tokens=True, group_tokens=False)
         Thread(target=self._run, daemon=True).start()
@@ -73,15 +79,29 @@ class LiveSession:
             self.cond.notify_all()
 
     def _get(self, start: int, end: int):
-        with self.cond:
-            while self.n < end and not self.eof:
-                self.cond.wait()
-            return None if self.n < end else self.buf[start:end].copy()
+        """Samples [start, end); waits for them. None once the session has ended. A session whose
+        browser stream just stops (no Stop event: page reloaded, mic switched mid-recording) is
+        closed after LIVE_IDLE_TIMEOUT s, so it can't hold the model forever."""
+        while True:
+            with self.cond:
+                if self.n >= end:
+                    return self.buf[start:end].copy()
+                if self.eof:
+                    return None
+                self.cond.wait(timeout=1.0)
+                idle = time.monotonic() - self.last_feed > LIVE_IDLE_TIMEOUT
+            if idle:
+                print(f"live: no audio for {LIVE_IDLE_TIMEOUT:.0f} s; closing the session", flush=True)
+                self.finish()
 
     def feed(self, chunk: np.ndarray) -> None:
         with self.feed_lock:
             if self.closed:
                 return  # the resampler was already flushed; drop the late chunk
+            self.last_feed = time.monotonic()
+            self.received += len(chunk) / self.in_sr
+            peak = float(np.max(np.abs(chunk))) if len(chunk) else 0.0
+            self.level_db = 20 * np.log10(max(peak, 1e-6))
             self._append(self.resampler.resample_chunk(chunk))
 
     def finish(self) -> None:
@@ -100,6 +120,7 @@ class LiveSession:
         p, m = PROCESSOR, MODEL
         started = False
         with MODEL_LOCK:
+            self.state = "transcribing"
             try:
                 p.set_num_lookahead_tokens(self.lookahead)
                 first_audio = self._get(0, p.num_samples_first_audio_chunk)
@@ -124,6 +145,7 @@ class LiveSession:
             finally:
                 if not started:
                     self.streamer.end()  # releases the collector thread
+                self.state = "finished"
                 self.done.set()
 
     def _collect(self) -> None:
@@ -138,27 +160,40 @@ def to_float_mono(data: np.ndarray) -> np.ndarray:
     return data.mean(axis=1) if data.ndim > 1 else data
 
 
-def live_start(lookahead_label):
-    return "", None
+def live_status(session) -> str:
+    if session is None:
+        busy = " · the model is busy with another transcription" if MODEL_LOCK.locked() else ""
+        return f"Waiting for audio from the microphone…{busy}"
+    level = session.level_db
+    hint = " · **very quiet: is the mic muted or the gain too low?**" if level < -50 else ""
+    return (f"Audio in: {session.in_sr / 1000:g} kHz · {session.received:.0f} s received · "
+            f"level {level:.0f} dB{hint} · {session.state}")
+
+
+def live_start(lookahead_label, session):
+    if session is not None:
+        session.finish()  # a previous recording that never got its Stop
+    return "", None, live_status(None)
 
 
 def live_chunk(new_chunk, session, lookahead_label):
     if new_chunk is None:
-        return (session.text if session else ""), session
+        return (session.text if session else ""), session, live_status(session)
     sr, data = new_chunk
     if session is None:
+        print(f"live: audio from the browser: {sr} Hz, shape {data.shape}, {data.dtype}", flush=True)
         session = LiveSession(sr, LOOKAHEAD[lookahead_label])
     session.feed(to_float_mono(data))
-    return session.text, session
+    return session.text, session, live_status(session)
 
 
 def live_stop(session):
     if session is None:
-        return "", None
+        return "", None, "No audio was received. Check that the right microphone is selected and not muted."
     session.finish()
     session.done.wait(timeout=30)
     time.sleep(0.2)  # let the collector take the streamer's final text
-    return session.text, None
+    return session.text, None, f"Done · {session.received:.0f} s of audio"
 
 
 def stream_file(audio: np.ndarray):
@@ -270,14 +305,15 @@ def build_ui():
             gr.Markdown("Press **Record**, speak Persian, and the text appears as you talk. Press **Stop** to finalize the last words.")
             la_live = gr.Radio(list(LOOKAHEAD), value=list(LOOKAHEAD)[0], label="Look-ahead (latency)")
             mic = gr.Audio(sources=["microphone"], streaming=True, label="Microphone")
+            live_info = gr.Markdown()  # audio level / state, to see at once whether the mic reaches the model
             # fixed height with its own scrollbar; autoscroll keeps the newest words in view
             out_live = gr.Textbox(label="Transcript", lines=12, max_lines=12, elem_id="live_out", elem_classes="fa", rtl=True)
             follow(out_live, "live_out")
             state = gr.State(None)
-            mic.start_recording(live_start, inputs=la_live, outputs=[out_live, state])
-            mic.stream(live_chunk, inputs=[mic, state, la_live], outputs=[out_live, state],
+            mic.start_recording(live_start, inputs=[la_live, state], outputs=[out_live, state, live_info])
+            mic.stream(live_chunk, inputs=[mic, state, la_live], outputs=[out_live, state, live_info],
                        stream_every=0.25, time_limit=1800, concurrency_limit=1)
-            mic.stop_recording(live_stop, inputs=state, outputs=[out_live, state])
+            mic.stop_recording(live_stop, inputs=state, outputs=[out_live, state, live_info])
         with gr.Tab("File"):
             gr.Markdown("Upload any audio or video file (mp3, m4a, wav, mp4, ...) or record a clip, then press **Transcribe**.")
             la_file = gr.Radio(list(LOOKAHEAD), value=list(LOOKAHEAD)[0], label="Look-ahead")
