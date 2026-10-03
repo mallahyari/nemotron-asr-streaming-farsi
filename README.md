@@ -30,6 +30,20 @@ uv run scripts/hf_transcribe_file.py audio.m4a  # transcribe files (any audio/vi
 uv run scripts/hf_stream_mic.py                 # live transcription from the microphone; Ctrl+C to stop
 ```
 
+**The local web app** (`gradio_app.py`) has two tabs:
+- **Live:** speak Persian into your microphone and the text appears as you talk.
+- **File:** upload any audio or video file.
+
+A short clip, transcribed in about a second:
+
+![Gradio app: a FLEURS clip transcribed](docs/images/gradio_file.png)
+
+A long file, transcribed in streaming mode. The text grows as it goes, with progress, time left and a Stop button:
+
+![Gradio app: a 3-minute file mid-transcription](docs/images/gradio_long_file.png)
+
+<sub>Audio: FLEURS Persian test set (CC-BY-4.0).</sub>
+
 These use the 🤗 Transformers version of the model. It runs on Apple Silicon (MPS), CUDA or the CPU; on an M1 Pro it's about 10× faster than real time.
 
 With NeMo instead: `uv sync --extra train`, then `uv run --extra train python scripts/transcribe.py audio.m4a`.
