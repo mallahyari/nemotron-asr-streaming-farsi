@@ -12,3 +12,6 @@ exp/
 *.flac
 *.nemo
 *.ckpt
+
+# local tool state (never commit)
+.memsearch/

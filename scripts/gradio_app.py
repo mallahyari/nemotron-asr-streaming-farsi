@@ -54,6 +54,8 @@ class LiveSession:
         self.buf = np.zeros(SR * 60, dtype=np.float32)
         self.n = 0
         self.eof = False
+        self.closed = False  # set by finish(); a stream chunk can still arrive after Stop
+        self.feed_lock = threading.Lock()
         self.cond = threading.Condition()
         self.text = ""
         self.done = threading.Event()
@@ -77,12 +79,17 @@ class LiveSession:
             return None if self.n < end else self.buf[start:end].copy()
 
     def feed(self, chunk: np.ndarray) -> None:
-        self._append(self.resampler.resample_chunk(chunk))
+        with self.feed_lock:
+            if self.closed:
+                return  # the resampler was already flushed; drop the late chunk
+            self._append(self.resampler.resample_chunk(chunk))
 
     def finish(self) -> None:
-        if self.eof:
-            return
-        self._append(self.resampler.resample_chunk(np.zeros(0, np.float32), last=True))
+        with self.feed_lock:
+            if self.closed:
+                return
+            self.closed = True
+            self._append(self.resampler.resample_chunk(np.zeros(0, np.float32), last=True))
         # two chunks of silence: the model holds back the look-ahead frames of each chunk
         self._append(np.zeros(2 * PROCESSOR.num_samples_per_audio_chunk, np.float32))
         with self.cond:
